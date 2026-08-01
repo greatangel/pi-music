@@ -76,7 +76,7 @@ pi-music/
 
 ## Notes for Raspberry Pi
 - Image uses `python:3.11-slim-bookworm` (ARM64 compatible)
-- Memory limited to 512MB in compose
+- Memory limited to 512MB in compose (optional)
 - FFmpeg and Opus libraries pre-installed
 - Runs as non-root user for security
 
