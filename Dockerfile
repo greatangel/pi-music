@@ -1,16 +1,38 @@
-# Use an official Python runtime as a parent image
-FROM python:3.12.3-slim
+# Use Python 3.11 slim as base (smaller than full, good for Pi)
+FROM python:3.11-slim-bookworm
 
-# Set the working directory in the container
+# Install system dependencies: ffmpeg for audio, git for yt-dlp updates, ca-certificates
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libopus0 \
+    libsodium23 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash appuser
+
+# Set working directory
 WORKDIR /app
 
-# Copy the current directory contents into the container at /app
-COPY ./LunaFM_version0.5_linux.py .
-COPY ./requirements.txt .
+# Copy requirements first for better layer caching
+COPY requirements.txt .
 
-# Install any needed dependencies specified in requirements.txt
-RUN apt-get update && apt-get install -y ffmpeg
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Command to run the application
-CMD ["python", "LunaFM_version0.5_linux.py"]
+# Copy bot code
+COPY bot.py .
+
+# Change ownership to appuser
+RUN chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Run the bot
+CMD ["python", "bot.py"]
