@@ -4,6 +4,13 @@ from discord.ext import commands
 from dotenv import load_dotenv
 import wavelink
 
+nodes = [
+    wavelink.Node(
+        uri="http://192.168.100.99:2281",
+        password="youshallnotpass"
+    )
+]
+
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
