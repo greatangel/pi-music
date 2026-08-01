@@ -1,90 +1,109 @@
 # Pi Music - Discord Music Bot
 
-A Discord music bot that plays audio from YouTube. Built with discord.py, yt-dlp, and FFmpeg.
+A lightweight, high-performance Discord music bot optimized for Raspberry Pi. Powered by `discord.py`, `wavelink`, and a standalone Lavalink v4 audio server with YouTube OAuth support to prevent IP blocking and rate limits.
 
 ## Features
-- Play music from YouTube (URL or search query)
+
+- **Ultra-low CPU usage** on Raspberry Pi (audio decoding/streaming is offloaded to Lavalink)
+- Play music from **YouTube, SoundCloud, and direct streams** (URL or search query)
+- **YouTube OAuth2 support** to bypass bot detection and rate limits
 - Queue management (add, remove, clear, shuffle)
-- Playback controls (pause, resume, skip)
-- Auto-disconnect after inactivity (5 minutes)
+- Playback controls (pause, resume, skip, now playing)
 - Multi-guild support
 
-## Quick Start (Docker + Portainer)
+---
+
+## Quick Start (Docker & Portainer Stack)
 
 ### 1. Prepare environment
+
+Clone your repository on your host machine or Raspberry Pi:
+
 ```bash
-cd /opt/data/workplace/pi-music
+git clone https://github.com/greatangel/pi-music.git
+cd pi-music
 cp .env.example .env
-# Edit .env and add your DISCORD_TOKEN
+# Edit .env and set your DISCORD_TOKEN
 ```
 
-### 2. Build and run with Docker Compose
-```bash
-docker compose up -d --build
-```
+### 2. Deploy via Portainer (Repository / Stack Method)
 
-### 3. Deploy via Portainer
-1. Open Portainer → Stacks → Add stack
-2. Name: `pi-music`
-3. Paste the contents of `docker-compose.yml`
-4. Add environment variable: `DISCORD_TOKEN=your_token_here`
-5. Deploy
+1. Open **Portainer → Stacks → Add stack**.
+2. **Name:** `pi-music`
+3. **Repository URL:** `https://github.com/greatangel/pi-music`
+4. **Compose path:** `docker-compose.yml`
+5. **Add Environment Variable:** `DISCORD_TOKEN=your_token_here`
+6. Click **Deploy the stack**.
 
-## Manual Docker (without compose)
-```bash
-# Build
-docker build -t pi-music .
+---
 
-# Run
-docker run -d \
-  --name pi-music \
-  --restart unless-stopped \
-  -e DISCORD_TOKEN=your_token_here \
-  -e TZ=America/Monterrey \
-  pi-music
-```
+## YouTube Authorization Setup (One-time)
+
+Because YouTube blocks automated server requests, Lavalink uses the official `youtube-plugin` with OAuth2.
+
+1. After deploying the stack, view the logs for the `lavalink` container in Portainer (or run `docker logs -f lavalink`).
+2. Look for a message containing a Google activation link and code:
+
+   ```
+   Go to https://www.google.com/device and enter code XXX-XXX-XXX
+   ```
+
+3. Open the link in a browser, enter the code, and approve access using a **burner Google account**.
+4. Lavalink will save the authorization token, and your bot will stream seamlessly.
+
+---
 
 ## Commands
+
 | Command | Description |
 |---------|-------------|
 | `!join` | Join your voice channel |
-| `!play <url or search>` | Play from YouTube |
+| `!play <url or query>` | Play track from YouTube/SoundCloud |
 | `!skip` | Skip current song |
-| `!queue` | Show queue |
+| `!queue` | Show current queue |
 | `!pause` | Pause playback |
 | `!resume` | Resume playback |
-| `!remove <num>` | Remove song from queue |
+| `!now` | Show currently playing song |
+| `!remove <num>` | Remove song from queue by position |
 | `!clear` | Clear queue |
 | `!shuffle` | Shuffle queue |
 | `!leave` | Disconnect bot |
-| `!help` | Show help |
+| `!help` | Show help menu |
+
+---
 
 ## Requirements
-- Python 3.11+
-- FFmpeg (included in Docker image)
-- Discord bot token with message content intent enabled
+
+- **Docker & Docker Compose**
+- **Discord Bot Token** with *Message Content Intent* enabled in the [Discord Developer Portal](https://discord.com/developers/applications)
+
+---
 
 ## Project Structure
+
 ```
 pi-music/
-├── bot.py              # Main bot code
-├── requirements.txt    # Python dependencies
-├── Dockerfile          # Container definition
-├── docker-compose.yml  # Portainer stack config
-└── .env.example        # Environment template
+├── bot.py              # Main Discord bot code (wavelink)
+├── requirements.txt    # Python dependencies (discord.py, wavelink)
+├── Dockerfile          # Lightweight Python container definition
+├── application.yml     # Lavalink server configuration & plugin definitions
+├── docker-compose.yml  # Multi-container stack (Bot + Lavalink)
+└── .env.example        # Environment variable template
 ```
 
-## Notes for Raspberry Pi
-- Image uses `python:3.11-slim-bookworm` (ARM64 compatible)
-- Memory limited to 512MB in compose (optional)
-- FFmpeg and Opus libraries pre-installed
-- Runs as non-root user for security
+---
+
+## Technical Details (Raspberry Pi Optimizations)
+
+- **Architecture:** Runs 2 containers (Python bot + Lavalink v4 JVM node).
+- **DNS Handling:** Designed to work alongside host Pi-hole without DNS loop issues (using `daemon.json` custom DNS resolvers if needed).
+- **Resource Footprint:** Offloads audio processing to Java, reducing memory footprint and preventing Python process stalls on ARM64 single-board computers.
+
+---
 
 ## Updating
-```bash
-cd /opt/data/workplace/pi-music
-git pull  # if using git
-docker compose up -d --build  # rebuild and restart
-```
 
-Or in Portainer: Stack → pi-music → Editor → Update the stack → Pull image & Recreate
+In Portainer:
+
+1. Go to **Stacks → pi-music**.
+2. Click **Git ops / Editor → Pull and redeploy**.
