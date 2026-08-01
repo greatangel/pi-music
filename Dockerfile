@@ -1,22 +1,15 @@
-# Use Python 3.11 slim as base (ARM64 compatible for Raspberry Pi)
-FROM python:3.11-slim-bookworm
+# Use Python 3.11 Alpine for lightweight, fast, and reliable builds on Raspberry Pi
+FROM python:3.11-alpine
 
-# Prevent apt interactive prompts
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Configure apt to force IPv4 and auto-retry (fixes common Pi / Docker network mirror timeouts)
-RUN echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4 && \
-    echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/99retries && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ffmpeg \
-        libopus0 \
-        libsodium23 \
-        ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+# Install system runtime dependencies for audio and Discord voice (FFmpeg, Opus, Sodium)
+RUN apk add --no-cache \
+    ffmpeg \
+    opus \
+    libsodium \
+    ca-certificates
 
 # Create non-root user for security
-RUN useradd --create-home --shell /bin/bash appuser
+RUN adduser -D -s /bin/sh appuser
 
 # Set working directory
 WORKDIR /app
@@ -24,21 +17,21 @@ WORKDIR /app
 # Copy requirements first for Docker layer caching
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install Python dependencies (PyNaCl has prebuilt musllinux wheels for ARM64)
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy bot code
 COPY bot.py .
 
-# Change ownership to appuser
+# Set ownership
 RUN chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
 
-# Set environment variables
+# Environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# Run the bot
+# Start the bot
 CMD ["python", "bot.py"]
