@@ -3,8 +3,7 @@ FROM python:3.11-alpine
 
 # 1. Added --update to ensure the package index is fresh.
 # 2. Re-typed to remove potential hidden non-breaking spaces.
-RUN apk update && \
-    apk add --no-cache \
+RUN apk add --no-cache --update \
     ffmpeg \
     opus \
     libsodium \
