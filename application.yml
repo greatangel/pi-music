@@ -1,6 +1,6 @@
 server:
   port: 2281
-  address: 0.0.0.0
+  address: 192.168.100.99
 lavalink:
   plugins:
     - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.2"
