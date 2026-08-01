@@ -16,11 +16,10 @@ class PiMusicBot(commands.Bot):
         intents.message_content = True
         super().__init__(command_prefix="!", intents=intents, help_command=None)
 
-    async def setup_hook(self):
-        # Connect to the Lavalink service defined in docker-compose.yml
+async def setup_hook(self):
         nodes = [
             wavelink.Node(
-                uri="http://lavalink:2281",
+                uri="http://lavalink:2281", # Use internal Docker network name
                 password="youshallnotpass"
             )
         ]
