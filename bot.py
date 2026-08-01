@@ -1,12 +1,8 @@
-import discord
-from discord.ext import commands, tasks
-import yt_dlp as youtube_dl
 import os
+import discord
+from discord.ext import commands
 from dotenv import load_dotenv
-import asyncio
-from youtubesearchpython import VideosSearch
-import time
-import random
+import wavelink
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -14,110 +10,43 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 if not TOKEN:
     raise ValueError("DISCORD_TOKEN environment variable not set")
 
-intents = discord.Intents.default()
-intents.message_content = True
+class PiMusicBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        super().__init__(command_prefix="!", intents=intents, help_command=None)
 
-bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+    async def setup_hook(self):
+        # Connect to the Lavalink service defined in docker-compose.yml
+        nodes = [
+            wavelink.Node(
+                uri="http://lavalink:2281",
+                password="youshallnotpass"
+            )
+        ]
+        await wavelink.Pool.connect(nodes=nodes, client=self)
 
-# Configuración para yt-dlp - use system ffmpeg (installed in container)
-ydl_opts = {
-    'format': 'bestaudio/best',
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '192',
-    }],
-    'quiet': True,
-    'no_warnings': True,
-}
-
-queues = {}
-DISCONNECT_AFTER = 300  # 5 minutes of inactivity
-last_activity = {}
-
-# Verificador de inactividad
-@tasks.loop(seconds=60)
-async def check_inactivity():
-    current_time = time.time()
-    for guild_id in list(last_activity.keys()):
-        guild = bot.get_guild(guild_id)
-        if not guild:
-            del last_activity[guild_id]
-            continue
-        
-        voice_client = guild.voice_client
-        if not voice_client or not voice_client.is_connected():
-            del last_activity[guild_id]
-            if guild_id in queues:
-                del queues[guild_id]
-            continue
-        
-        # Calcular tiempo inactivo
-        tiempo_inactivo = current_time - last_activity[guild_id]
-        
-        # Verificar condiciones para desconectar
-        if (
-            not voice_client.is_playing() and 
-            not queues.get(guild_id, []) and 
-            tiempo_inactivo >= DISCONNECT_AFTER
-        ):
-            await voice_client.disconnect()
-            if guild_id in queues:
-                del queues[guild_id]
-            del last_activity[guild_id]
-            print(f"Disconnected due to inactivity in {guild.name}")
-
-def after_playing(error, guild_id):
-    if error:
-        print(f'Playback error: {error}')
-    
-    if guild_id in queues and queues[guild_id]:
-        next_song = queues[guild_id].pop(0)
-        
-        guild = bot.get_guild(guild_id)
-        if not guild:
-            return
-        
-        voice_client = guild.voice_client
-        if not voice_client:
-            return
-        
-        ffmpeg_options = {
-            'options': '-vn',
-            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5'
-        }
-        source = discord.FFmpegPCMAudio(next_song['url'], **ffmpeg_options)
-        voice_client.play(source, after=lambda e: after_playing(e, guild_id))
-        
-        # Use proper async scheduling instead of run_coroutine_threadsafe
-        asyncio.run_coroutine_threadsafe(
-            next_song['ctx'].send(f"Reproduciendo: {next_song['title']}"), 
-            bot.loop
-        )
-        
-        # Actualizar la última actividad al reproducir nueva canción
-        last_activity[guild_id] = time.time()
-    else:
-        # Iniciar temporizador de desconexión
-        last_activity[guild_id] = time.time()
+bot = PiMusicBot()
 
 @bot.event
 async def on_ready():
     print(f'Pi Music connected as {bot.user} (ID: {bot.user.id})')
     print(f'Connected to {len(bot.guilds)} guilds')
-    check_inactivity.start()
 
 @bot.event
-async def on_voice_state_update(member, before, after):
-    """Track when bot is disconnected manually or moved"""
-    if member.id == bot.user.id:
-        guild_id = before.channel.guild.id if before.channel else (after.channel.guild.id if after.channel else None)
-        if guild_id and before.channel and not after.channel:
-            # Bot was disconnected
-            if guild_id in queues:
-                del queues[guild_id]
-            if guild_id in last_activity:
-                del last_activity[guild_id]
+async def on_wavelink_node_ready(payload: wavelink.NodeReadyEventPayload):
+    print(f"Lavalink Node ready: {payload.node.identifier}")
+
+@bot.event
+async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
+    """Play the next track in queue automatically when a song finishes."""
+    player: wavelink.Player | None = payload.player
+    if not player:
+        return
+
+    if not player.queue.is_empty:
+        next_track = await player.queue.get_wait()
+        await player.play(next_track)
 
 @bot.command()
 async def join(ctx):
@@ -127,98 +56,61 @@ async def join(ctx):
         if ctx.voice_client:
             await ctx.voice_client.move_to(channel)
         else:
-            await channel.connect()
+            await channel.connect(cls=wavelink.Player)
         await ctx.send(f"Conectado a **{channel.name}**")
     else:
         await ctx.send("Debes estar en un canal de voz.")
 
 @bot.command()
 async def play(ctx, *, query: str):
-    """Play a song from YouTube (URL or search query)"""
-    voice_client = ctx.voice_client
+    """Play a song from YouTube/SoundCloud (URL or search query)"""
+    if not ctx.author.voice:
+        return await ctx.send("Debes estar en un canal de voz.")
 
-    if not voice_client:
-        await ctx.invoke(join)
-        voice_client = ctx.voice_client
-        if not voice_client:
-            return
+    player: wavelink.Player = ctx.voice_client  # type: ignore
 
-    # Determinar si es URL o búsqueda
-    if not query.startswith(('http://', 'https://', 'www.', 'youtube.com', 'youtu.be')):
-        # Buscar en YouTube
-        try:
-            search = VideosSearch(query, limit=1)
-            result = search.result()
-            if not result['result']:
-                await ctx.send("❌ No se encontraron resultados")
-                return
-            url = result['result'][0]['link']
-        except Exception as e:
-            await ctx.send(f"❌ Error en la búsqueda: {e}")
-            return
-    else:
-        url = query
+    if not player:
+        player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
 
     await ctx.send("🔍 Obteniendo información...")
-    
-    try:
-        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            url_audio = info['url']
-            title = info.get('title', 'Título desconocido')
-    except Exception as e:
-        await ctx.send(f"❌ Error al obtener audio: {e}")
-        return
 
-    song = {
-        'url': url_audio,
-        'title': title,
-        'ctx': ctx
-    }
+    # Search using Wavelink (handles both URLs and plain text search queries)
+    tracks: wavelink.Search = await wavelink.Playable.search(query)
 
-    guild_id = ctx.guild.id
-    if guild_id not in queues:
-        queues[guild_id] = []
-    queues[guild_id].append(song)
+    if not tracks:
+        return await ctx.send("❌ No se encontraron resultados")
 
-    # Actualizar actividad
-    last_activity[guild_id] = time.time()
+    track: wavelink.Playable = tracks[0]
 
-    if not voice_client.is_playing():
-        next_song = queues[guild_id].pop(0)
-        ffmpeg_options = {
-            'options': '-vn',
-            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5'
-        }
-        source = discord.FFmpegPCMAudio(next_song['url'], **ffmpeg_options)
-        voice_client.play(source, after=lambda e: after_playing(e, guild_id))
-        await ctx.send(f"▶ Reproduciendo: **{next_song['title']}**")
+    if player.playing or player.paused:
+        await player.queue.put_wait(track)
+        await ctx.send(f"🎵 Añadido a la cola: **{track.title}**")
     else:
-        await ctx.send(f"🎵 Añadido a la cola: **{title}**")
+        await player.play(track)
+        await ctx.send(f"▶ Reproduciendo: **{track.title}**")
 
 @bot.command()
 async def skip(ctx):
     """Skip the current song"""
-    voice_client = ctx.voice_client
-    
-    if not voice_client or not voice_client.is_playing():
+    player: wavelink.Player = ctx.voice_client  # type: ignore
+
+    if not player or not player.playing:
         await ctx.send("No hay ninguna canción reproduciéndose")
         return
-    
-    voice_client.stop()
+
+    await player.skip()
     await ctx.send("⏩ Canción saltada")
 
 @bot.command()
 async def queue(ctx):
     """Show the current queue"""
-    guild_id = ctx.guild.id
-    
-    if not queues.get(guild_id):
+    player: wavelink.Player = ctx.voice_client  # type: ignore
+
+    if not player or player.queue.is_empty:
         await ctx.send("La cola está vacía")
         return
-    
-    queue_list = [f"**{i+1}.** {song['title']}" for i, song in enumerate(queues[guild_id])]
-    # Limit display to 20 songs to avoid message length issues
+
+    queue_list = [f"**{i+1}.** {track.title}" for i, track in enumerate(player.queue)]
     display = queue_list[:20]
     msg = "**Cola de reproducción:**\n" + "\n".join(display)
     if len(queue_list) > 20:
@@ -228,10 +120,10 @@ async def queue(ctx):
 @bot.command()
 async def pause(ctx):
     """Pause playback"""
-    voice_client = ctx.voice_client
-    
-    if voice_client and voice_client.is_playing():
-        voice_client.pause()
+    player: wavelink.Player = ctx.voice_client  # type: ignore
+
+    if player and player.playing:
+        await player.pause(True)
         await ctx.send("⏸ Reproducción pausada")
     else:
         await ctx.send("No hay nada reproduciéndose")
@@ -239,10 +131,10 @@ async def pause(ctx):
 @bot.command()
 async def resume(ctx):
     """Resume playback"""
-    voice_client = ctx.voice_client
-    
-    if voice_client and voice_client.is_paused():
-        voice_client.resume()
+    player: wavelink.Player = ctx.voice_client  # type: ignore
+
+    if player and player.paused:
+        await player.pause(False)
         await ctx.send("▶ Reproducción reanudada")
     else:
         await ctx.send("La reproducción no está pausada")
@@ -250,66 +142,60 @@ async def resume(ctx):
 @bot.command()
 async def remove(ctx, index: int):
     """Remove a song from queue by index (1-based)"""
-    guild_id = ctx.guild.id
-    
-    if not queues.get(guild_id):
+    player: wavelink.Player = ctx.voice_client  # type: ignore
+
+    if not player or player.queue.is_empty:
         await ctx.send("La cola está vacía")
         return
-    
-    if index < 1 or index > len(queues[guild_id]):
+
+    if index < 1 or index > len(player.queue):
         await ctx.send("Número de canción inválido")
         return
-    
-    removed_song = queues[guild_id].pop(index - 1)
-    await ctx.send(f"❌ Canción eliminada: **{removed_song['title']}**")        
+
+    removed_track = player.queue.delete(index - 1)
+    await ctx.send(f"❌ Canción eliminada: **{removed_track.title}**")
 
 @bot.command()
 async def clear(ctx):
     """Clear the entire queue"""
-    guild_id = ctx.guild.id
-    
-    if not queues.get(guild_id):
+    player: wavelink.Player = ctx.voice_client  # type: ignore
+
+    if not player or player.queue.is_empty:
         await ctx.send("La cola ya está vacía")
         return
-    
-    queues[guild_id].clear()
+
+    player.queue.clear()
     await ctx.send("🧹 Cola limpiada")
 
 @bot.command()
 async def shuffle(ctx):
     """Shuffle the queue"""
-    guild_id = ctx.guild.id
-    
-    if not queues.get(guild_id) or len(queues[guild_id]) < 2:
+    player: wavelink.Player = ctx.voice_client  # type: ignore
+
+    if not player or player.queue.is_empty or len(player.queue) < 2:
         await ctx.send("No hay suficientes canciones en la cola para mezclar")
         return
-    
-    random.shuffle(queues[guild_id])
+
+    player.queue.shuffle()
     await ctx.send("🔀 Cola mezclada")
 
 @bot.command()
 async def now(ctx):
     """Show currently playing song"""
-    voice_client = ctx.voice_client
-    guild_id = ctx.guild.id
-    
-    if not voice_client or not voice_client.is_playing():
+    player: wavelink.Player = ctx.voice_client  # type: ignore
+
+    if not player or not player.current:
         await ctx.send("No hay nada reproduciéndose")
         return
-    
-    # We don't track current song easily, so just show queue[0] if playing
-    await ctx.send("Use `!queue` to see what's playing (first item)")
+
+    await ctx.send(f"▶ Reproduciendo ahora: **{player.current.title}**")
 
 @bot.command()
 async def leave(ctx):
     """Disconnect from voice channel"""
-    if ctx.voice_client:
-        guild_id = ctx.guild.id
-        if guild_id in queues:
-            del queues[guild_id]
-        if guild_id in last_activity:
-            del last_activity[guild_id]
-        await ctx.voice_client.disconnect()
+    player: wavelink.Player = ctx.voice_client  # type: ignore
+    if player:
+        await player.disconnect()
         await ctx.send("Desconectado")
     else:
         await ctx.send("No estoy en un canal de voz.")
@@ -320,7 +206,7 @@ async def help(ctx):
     help_text = """
 **Pi Music - Comandos disponibles:**
 `!join` - Unirse a tu canal de voz
-`!play <url o búsqueda>` - Reproducir canción de YouTube
+`!play <url o búsqueda>` - Reproducir canción de YouTube/SoundCloud
 `!skip` - Saltar canción actual
 `!queue` - Ver cola de reproducción
 `!pause` - Pausar reproducción
@@ -328,8 +214,9 @@ async def help(ctx):
 `!remove <número>` - Eliminar canción de la cola
 `!clear` - Limpiar toda la cola
 `!shuffle` - Mezclar cola
+`!now` - Ver canción en reproducción
 `!leave` - Desconectar bot
-`!help` - Mostrar esta ayuda
+`!help` - Mostrar comandos
     """
     await ctx.send(help_text)
 
