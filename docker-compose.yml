@@ -1,11 +1,11 @@
 version: '3.8'
 
 services:
-  lunafm:
+  pi-music:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: pimusic
+    container_name: pi-music
     restart: unless-stopped
     environment:
       - DISCORD_TOKEN=${DISCORD_TOKEN}
@@ -32,4 +32,4 @@ services:
 
 networks:
   default:
-    name: pimusic-network
+    name: pi-music-network

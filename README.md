@@ -13,7 +13,7 @@ A Discord music bot that plays audio from YouTube. Built with discord.py, yt-dlp
 
 ### 1. Prepare environment
 ```bash
-cd /opt/data/workplace/lunafm
+cd /opt/data/workplace/pi-music
 cp .env.example .env
 # Edit .env and add your DISCORD_TOKEN
 ```
@@ -25,7 +25,7 @@ docker compose up -d --build
 
 ### 3. Deploy via Portainer
 1. Open Portainer → Stacks → Add stack
-2. Name: `lunafm`
+2. Name: `pi-music`
 3. Paste the contents of `docker-compose.yml`
 4. Add environment variable: `DISCORD_TOKEN=your_token_here`
 5. Deploy
@@ -33,15 +33,15 @@ docker compose up -d --build
 ## Manual Docker (without compose)
 ```bash
 # Build
-docker build -t lunafm .
+docker build -t pi-music .
 
 # Run
 docker run -d \
-  --name lunafm \
+  --name pi-music \
   --restart unless-stopped \
   -e DISCORD_TOKEN=your_token_here \
   -e TZ=America/Monterrey \
-  lunafm
+  pi-music
 ```
 
 ## Commands
@@ -66,7 +66,7 @@ docker run -d \
 
 ## Project Structure
 ```
-lunafm/
+pi-music/
 ├── bot.py              # Main bot code
 ├── requirements.txt    # Python dependencies
 ├── Dockerfile          # Container definition
@@ -82,9 +82,9 @@ lunafm/
 
 ## Updating
 ```bash
-cd /opt/data/workplace/lunafm
+cd /opt/data/workplace/pi-music
 git pull  # if using git
 docker compose up -d --build  # rebuild and restart
 ```
 
-Or in Portainer: Stack → lunafm → Editor → Update the stack → Pull image & Recreate
+Or in Portainer: Stack → pi-music → Editor → Update the stack → Pull image & Recreate
