@@ -20,7 +20,7 @@ class PiMusicBot(commands.Bot):
         # Connect to the Lavalink service defined in docker-compose.yml
         nodes = [
             wavelink.Node(
-                uri="http://192.168.100.99:2281",
+                uri="http://lavalink:2281",
                 password="youshallnotpass"
             )
         ]
