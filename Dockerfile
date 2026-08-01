@@ -1,13 +1,16 @@
 # Use Python 3.11 slim as base (smaller than full, good for Pi)
 FROM python:3.11-slim-bookworm
 
-# Install system dependencies: ffmpeg for audio, git for yt-dlp updates, ca-certificates
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system dependencies: ffmpeg for audio, opus/sodium for discord voice
+# Use retry loop for ARM64 mirror reliability
+RUN for i in 1 2 3; do apt-get update && break || sleep 10; done \
+    && apt-get install -y --no-install-recommends \
     ffmpeg \
     libopus0 \
     libsodium23 \
     ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser
